@@ -37,7 +37,87 @@ Edit `.env`:
 OLLAMA_MODEL=llama3.1:8b
 EMAIL_ADDRESS=your_email@gmail.com
 EMAIL_APP_PASSWORD=your_gmail_app_password
+
+# Optional applicant fields. Blank values are omitted completely.
+APPLICANT_FULL_NAME=
+APPLICANT_PHONE=
+APPLICANT_LOCATION=
+APPLICANT_PERSONAL_EMAIL=
+APPLICANT_PORTFOLIO_URL=
+APPLICANT_BLOG_URL=
+APPLICANT_GITHUB_URL=
+APPLICANT_LINKEDIN_URL=
+
+EMAIL_LANGUAGE=English
+EMAIL_ACADEMIC_LEVEL=B
+EMAIL_TONE=professional
+EMAIL_MAX_WORDS=180
+EMAIL_INCLUDE_LINKS=true
+EMAIL_INCLUDE_PHONE=false
+EMAIL_INCLUDE_LOCATION=false
+EMAIL_SIGNATURE_STYLE=compact
 ```
+
+## Configuration
+
+HUNT reads configuration from `.env` with `python-dotenv`. All applicant profile fields are optional. If a value is empty, missing, or only whitespace, HUNT omits it completely from the prompt, signature, preview, and logs. It will never ask the model to use placeholders such as portfolio links, phone numbers, or names that you did not provide.
+
+Core settings:
+
+- `OLLAMA_MODEL`: local Ollama model, default `llama3.1:8b`
+- `EMAIL_ADDRESS`: Gmail address used only for sending
+- `EMAIL_APP_PASSWORD`: Gmail app password used only for sending
+
+Applicant profile fields:
+
+- `APPLICANT_FULL_NAME`: name for the signature and optional introduction
+- `APPLICANT_PHONE`: included only when `EMAIL_INCLUDE_PHONE=true`
+- `APPLICANT_LOCATION`: included only when `EMAIL_INCLUDE_LOCATION=true`
+- `APPLICANT_PERSONAL_EMAIL`: email for detailed signatures
+- `APPLICANT_PORTFOLIO_URL`: included only when links are enabled
+- `APPLICANT_BLOG_URL`: included only when links are enabled
+- `APPLICANT_GITHUB_URL`: included only when links are enabled
+- `APPLICANT_LINKEDIN_URL`: included only when links are enabled
+
+Email style fields:
+
+- `EMAIL_LANGUAGE`: output language, for example `English`, `Turkish`, `French`, or `Arabic`
+- `EMAIL_ACADEMIC_LEVEL`: `A`, `B`, or `C`
+- `EMAIL_TONE`: extra tone hint such as `professional`, `warm`, `confident`, `humble`, `startup`, or `research-focused`
+- `EMAIL_MAX_WORDS`: maximum body word count
+- `EMAIL_INCLUDE_LINKS`: `true` or `false`
+- `EMAIL_INCLUDE_PHONE`: `true` or `false`
+- `EMAIL_INCLUDE_LOCATION`: `true` or `false`
+- `EMAIL_SIGNATURE_STYLE`: `compact`, `detailed`, or `minimal`
+
+Academic levels:
+
+- `A`: casual/simple student tone; direct, friendly, simple words, less formal, suitable for startups
+- `B`: balanced professional tone; professional but natural, not too academic, not too casual
+- `C`: highly academic/formal tone; more structured, suitable for research labs, universities, academic internships, and R&D departments
+
+Signature styles:
+
+- `compact`: short signature with name and selected links
+- `detailed`: name, email, phone/location if enabled, and selected links on separate lines
+- `minimal`: name only
+
+Example profile:
+
+```bash
+APPLICANT_FULL_NAME=Vall
+APPLICANT_GITHUB_URL=https://github.com/gkxvall
+APPLICANT_LINKEDIN_URL=
+APPLICANT_PHONE=
+EMAIL_LANGUAGE=English
+EMAIL_ACADEMIC_LEVEL=B
+EMAIL_TONE=warm
+EMAIL_INCLUDE_LINKS=true
+EMAIL_INCLUDE_PHONE=true
+EMAIL_SIGNATURE_STYLE=compact
+```
+
+With that profile, HUNT sends only the non-empty, enabled fields to the local model: the name and GitHub URL. It does not send or mention empty LinkedIn or phone values.
 
 ## Ollama Setup
 

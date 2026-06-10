@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Annotated
 
 import typer
@@ -8,10 +7,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from hunt.config import AppConfig, load_config
 from hunt.cv_reader import read_cv
 from hunt.email_sender import send_email
 from hunt.email_writer import summarize_candidate, summarize_company, write_email
-from hunt.local_llm import check_ollama_connection, get_ollama_model
+from hunt.local_llm import check_ollama_connection
 from hunt.tracker import list_applications, save_application, update_status
 from hunt.utils import HuntError
 from hunt.website_reader import extract_website_text
@@ -25,13 +25,26 @@ def _show_error(message: str) -> None:
     console.print(Panel(message, title="HUNT Error", border_style="red"))
 
 
-def _render_preview(website: str, recipient_email: str, subject: str, body: str) -> None:
+def _render_preview(
+    website: str,
+    recipient_email: str,
+    subject: str,
+    body: str,
+    config: AppConfig,
+) -> None:
     table = Table.grid(padding=(0, 1))
     table.add_column(style="bold")
     table.add_column()
     table.add_row("Company website", website)
     table.add_row("To", recipient_email)
-    table.add_row("Ollama model", get_ollama_model())
+    table.add_row("Ollama model", config.ollama_model)
+    table.add_row("Email language", config.email_style.language)
+    table.add_row("Academic level", config.email_style.academic_level)
+    table.add_row("Tone", config.email_style.tone)
+    table.add_row("Max words", str(config.email_style.max_words))
+    table.add_row("Include links", str(config.email_style.include_links))
+    table.add_row("Include phone", str(config.email_style.include_phone))
+    table.add_row("Include location", str(config.email_style.include_location))
     table.add_row("Subject", subject)
 
     console.print(
@@ -54,6 +67,7 @@ def apply(
     """Generate a tailored internship application email."""
     application_id: int | None = None
     try:
+        config = load_config()
         with console.status("Checking Ollama...", spinner="dots"):
             check_ollama_connection()
 
@@ -70,7 +84,13 @@ def apply(
             candidate_summary = summarize_candidate(cv_text)
 
         with console.status("Writing email...", spinner="dots"):
-            generated = write_email(company_summary, candidate_summary, email)
+            generated = write_email(
+                company_summary,
+                candidate_summary,
+                email,
+                config.applicant_profile,
+                config.email_style,
+            )
 
         application_id = save_application(
             company_website=website,
@@ -79,7 +99,7 @@ def apply(
             body=generated.body,
             status="previewed",
         )
-        _render_preview(website, email, generated.subject, generated.body)
+        _render_preview(website, email, generated.subject, generated.body, config)
 
         if not send:
             console.print("[yellow]Preview only. Nothing was sent.[/yellow]")
@@ -91,12 +111,10 @@ def apply(
             console.print("[yellow]Cancelled. Nothing was sent.[/yellow]")
             return
 
-        sender_email = os.getenv("EMAIL_ADDRESS", "")
-        app_password = os.getenv("EMAIL_APP_PASSWORD", "")
         with console.status("Sending email...", spinner="dots"):
             send_email(
-                sender_email=sender_email,
-                app_password=app_password,
+                sender_email=config.email_address,
+                app_password=config.email_app_password,
                 recipient_email=email,
                 subject=generated.subject,
                 body=generated.body,
@@ -142,10 +160,17 @@ def history() -> None:
 @app.command("check-llm")
 def check_llm() -> None:
     """Check the local Ollama connection and configured model."""
+    config = load_config()
     try:
         _, model = check_ollama_connection()
     except HuntError as exc:
         _show_error(str(exc))
         raise typer.Exit(code=1) from exc
 
-    console.print(Panel(f"Ollama is running and model '{model}' is available.", border_style="green"))
+    console.print(
+        Panel(
+            f"Ollama is running and model '{model}' is available.\n"
+            f"Configured model: {config.ollama_model}",
+            border_style="green",
+        )
+    )

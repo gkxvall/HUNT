@@ -5,12 +5,11 @@ from typing import Any
 
 import requests
 
+from hunt.config import DEFAULT_OLLAMA_MODEL
 from hunt.utils import HuntError
 
 
 OLLAMA_URL = "http://localhost:11434"
-DEFAULT_MODEL = "llama3.1:8b"
-
 
 class OllamaConnectionError(HuntError):
     pass
@@ -21,7 +20,7 @@ class OllamaModelError(HuntError):
 
 
 def get_ollama_model() -> str:
-    return os.getenv("OLLAMA_MODEL", DEFAULT_MODEL)
+    return os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip() or DEFAULT_OLLAMA_MODEL
 
 
 def _raise_for_ollama_response(response: requests.Response, model: str) -> None:
