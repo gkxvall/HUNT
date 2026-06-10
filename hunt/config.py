@@ -8,7 +8,7 @@ from typing import Any
 from dotenv import find_dotenv, load_dotenv
 
 
-DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
+DEFAULT_OLLAMA_MODEL = "qwen2.5:3b-instruct"
 DEFAULT_EMAIL_LANGUAGE = "English"
 DEFAULT_ACADEMIC_LEVEL = "B"
 DEFAULT_EMAIL_TONE = "professional"

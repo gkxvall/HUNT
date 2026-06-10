@@ -62,7 +62,7 @@ class TestConfig(unittest.TestCase):
         with patch("hunt.config.load_environment", return_value=None), patch.dict("os.environ", {}, clear=True):
             config = load_config()
 
-        self.assertEqual(config.ollama_model, "llama3.1:8b")
+        self.assertEqual(config.ollama_model, "qwen2.5:3b-instruct")
         self.assertEqual(config.email_style.language, "English")
         self.assertEqual(config.email_style.academic_level, "B")
         self.assertEqual(config.email_style.tone, "professional")
