@@ -34,6 +34,8 @@ class TestLocalLlm(unittest.TestCase):
 
         payload = post.call_args.kwargs["json"]
         self.assertEqual(payload["format"], "json")
+        self.assertIn("<|im_start|>", payload["options"]["stop"])
+        self.assertEqual(payload["options"]["repeat_penalty"], 1.1)
 
     def test_json_mode_retries_without_format_if_unsupported(self) -> None:
         unsupported = Mock()

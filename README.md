@@ -132,7 +132,9 @@ This writes:
 - `data/debug/candidate_raw.txt`
 - `data/debug/candidate_parsed.json`
 - `data/debug/email_raw.txt`
+- `data/debug/email_sanitized.txt`
 - `data/debug/email_parsed.json`
+- `data/debug/email_final.txt`
 
 HUNT asks Ollama for JSON mode when possible, then repairs or falls back when the model returns markdown, text around JSON, Python-style dictionaries, or normal email text.
 

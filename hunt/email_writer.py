@@ -8,6 +8,7 @@ from typing import Any
 from hunt.config import (
     ApplicantInternshipPreferences,
     ApplicantProfile,
+    AppConfig,
     EmailStyleConfig,
 )
 from hunt.json_utils import (
@@ -15,10 +16,13 @@ from hunt.json_utils import (
     COMPANY_SUMMARY_SCHEMA,
     EMAIL_OUTPUT_SCHEMA,
     LLMJsonParseError,
+    body_looks_invalid,
     clean_email_body,
     parse_candidate_summary,
     parse_company_summary,
     parse_email_output,
+    sanitize_email_body,
+    sanitize_llm_output,
     validate_email_output,
 )
 from hunt.local_llm import generate_with_local_llm
@@ -286,10 +290,23 @@ def build_email_prompt(
     )
 
     return f"""
-{JSON_SYSTEM_CONTRACT}
+You are generating machine-readable JSON for a CLI app.
+Return exactly one JSON object.
+Do not include markdown.
+Do not include explanations.
+Do not include chat template tokens.
+Do not include <|im_start|> or <|im_end|>.
+Do not include text in any language other than {email_style_config.language}, except company/project/technology names.
+The JSON object must have exactly these keys:
+{{
+  "subject": "string",
+  "body": "string"
+}}
 
-You are HUNT, a local privacy-first internship application assistant.
-Write a tailored internship application email to {recipient_email}.
+The body must contain the final email text only.
+The body must not contain JSON.
+The body must not contain "subject" or "body" keys.
+The body must not contain code fences.
 
 You MUST adapt the email using these settings:
 - language: {email_style_config.language}
@@ -373,6 +390,11 @@ Return ONLY valid JSON:
 
 The body value may contain newline characters escaped as \\n, but it must remain valid JSON.
 Do not write anything outside the JSON object.
+
+Return only:
+{{"subject":"...","body":"..."}}
+
+No other text.
 """.strip()
 
 
@@ -397,6 +419,7 @@ def write_email(
     raw_output = generate_with_local_llm(prompt, model=model, temperature=0.2, json_mode=True)
     if debug_outputs is not None:
         debug_outputs["email_raw"] = raw_output
+        debug_outputs["email_sanitized"] = sanitize_llm_output(raw_output)
     try:
         parsed = parse_email_output(raw_output)
     except LLMJsonParseError:
@@ -405,10 +428,75 @@ def write_email(
             debug_outputs["email_repair_raw"] = repaired
         parsed = parse_email_output(repaired)
     subject = parsed["subject"]
-    body = clean_email_body(parsed["body"])
+    body = sanitize_email_body(parsed["body"], email_style_config.language)
     if debug_outputs is not None:
         debug_outputs["email_parsed"] = {"subject": subject, "body": body}
+        debug_outputs["email_final"] = f"Subject: {subject}\n\n{body}"
     return subject, body
+
+
+def build_fallback_email(
+    company_summary: dict[str, Any],
+    candidate_context: dict[str, Any],
+    config: AppConfig,
+) -> tuple[str, str]:
+    language = config.email_style.language.strip().lower()
+    company = company_summary.get("company_name") or "Company"
+    mode = config.internship_preferences.mode
+    name = candidate_context.get("full_name")
+    university = candidate_context.get("university")
+    department = candidate_context.get("department")
+    year = candidate_context.get("year_level")
+    skills = _join_items(candidate_context.get("technical_skills", []), 3)
+    interests = _join_items(candidate_context.get("main_interests", []), 2)
+    detail = (
+        company_summary.get("specific_company_detail")
+        or company_summary.get("what_company_does")
+        or _join_items(company_summary.get("technologies_or_domains", []), 2)
+    )
+    signature = _format_signature(config)
+
+    subject = "Internship Application"
+    if language == "turkish":
+        intro_bits = []
+        if name:
+            intro_bits.append(f"Ben {name}")
+        if year or department or university:
+            student = " ".join(str(part) for part in (year, department) if part)
+            uni = f"{university} öğrencisiyim" if university else "öğrencisiyim"
+            intro_bits.append(f"{student} {uni}".strip())
+        intro = ", ".join(intro_bits) if intro_bits else "Merhaba"
+        body_parts = [
+            f"Sayın {company} Ekibi,",
+            f"{intro}. Uygun bir {mode} staj fırsatı olup olmadığını sormak için yazıyorum.",
+        ]
+        if detail:
+            body_parts.append(f"Çalışmalarınızda {detail} alanı ilgimi çekti.")
+        if skills or interests:
+            body_parts.append(f"Arka planım {skills or interests} konularını içeriyor.")
+        body_parts.append("Uygun bir fırsat olması halinde değerlendirebilmeniz için CV'mi ekledim. Zamanınız ve değerlendirmeniz için teşekkür ederim.")
+        body_parts.append(signature or "Saygılarımla")
+        return subject, "\n\n".join(part for part in body_parts if part).strip()
+
+    intro = []
+    if name:
+        intro.append(f"My name is {name}")
+    student_bits = " ".join(str(part) for part in (year, department) if part)
+    if university or student_bits:
+        intro.append(f"I am a {student_bits} student at {university}".strip())
+    intro_sentence = ", and ".join(intro) + "." if intro else "Hello."
+
+    body_parts = [
+        f"Dear {company} Team,",
+        f"{intro_sentence} I am writing to ask if there might be a suitable {mode} internship opportunity.",
+    ]
+    if detail:
+        body_parts.append(f"I am interested in your work in {detail}.")
+    if skills or interests:
+        body_parts.append(f"My background includes {skills or interests}.")
+    body_parts.append("I attached my CV in case of any suitable opportunity. Thank you for your time and consideration.")
+    body_parts.append(signature or "Best regards")
+    return subject, "\n\n".join(part for part in body_parts if part).strip()
 
 
 def build_generation_warnings(
@@ -426,6 +514,8 @@ def build_generation_warnings(
         email_style_config,
     )
     warnings.extend(validate_email_output(subject, body, email_style_config.max_words))
+    if body_looks_invalid(body, email_style_config.language):
+        warnings.append("Body still looks malformed after cleaning.")
     return warnings
 
 
@@ -520,6 +610,34 @@ def _language_warning(language: str, body: str) -> str | None:
 def _warn_if_value_present(warnings: list[str], body: str, value: str, label: str) -> None:
     if value.lower() in body.lower():
         warnings.append(f"{label} appears even though its include flag is disabled.")
+
+
+def _join_items(items: Any, limit: int) -> str:
+    if not isinstance(items, list):
+        items = [items] if items else []
+    return ", ".join(str(item) for item in items[:limit] if item)
+
+
+def _format_signature(config: AppConfig) -> str:
+    signature = config.applicant_profile.to_signature_dict(config.email_style)
+    language = config.email_style.language.strip().lower()
+    signoff = "Saygılarımla" if language == "turkish" else "Best regards"
+    lines = [signoff]
+    if signature.get("name"):
+        lines.append(str(signature["name"]))
+    if config.email_style.signature_style == "detailed":
+        for label, key in (("Email", "email"), ("Phone", "phone"), ("Location", "location")):
+            if signature.get(key):
+                lines.append(f"{label}: {signature[key]}")
+    if signature.get("links"):
+        links = signature["links"]
+        if config.email_style.signature_style == "compact":
+            lines.append(" | ".join(str(value) for value in links.values() if value))
+        else:
+            for key, value in links.items():
+                label = key.replace("_url", "").replace("_", " ").title()
+                lines.append(f"{label}: {value}")
+    return "\n".join(line for line in lines if line).strip()
 
 
 def _first_present(*values: Any) -> Any:

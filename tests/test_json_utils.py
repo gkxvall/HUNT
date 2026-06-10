@@ -4,15 +4,23 @@ import unittest
 
 from hunt.json_utils import (
     LLMJsonParseError,
+    body_looks_invalid,
     clean_email_body,
     parse_email_output,
     parse_llm_json,
+    sanitize_email_body,
+    sanitize_llm_output,
 )
 
 
 class TestJsonUtils(unittest.TestCase):
     def test_pure_json_parses(self) -> None:
         self.assertEqual(parse_llm_json('{"subject": "Hi"}')["subject"], "Hi")
+
+    def test_parse_email_output_extracts_body_from_json(self) -> None:
+        parsed = parse_email_output('{"subject": "Internship", "body": "Dear Team"}')
+        self.assertEqual(parsed["subject"], "Internship")
+        self.assertEqual(parsed["body"], "Dear Team")
 
     def test_json_code_fence_parses(self) -> None:
         parsed = parse_llm_json('```json\n{"subject": "Hi"}\n```')
@@ -21,6 +29,20 @@ class TestJsonUtils(unittest.TestCase):
     def test_text_before_and_after_json_parses(self) -> None:
         parsed = parse_llm_json('Here is JSON:\n{"subject": "Hi"}\nDone.')
         self.assertEqual(parsed["subject"], "Hi")
+
+    def test_parse_email_output_unwraps_json_string_output(self) -> None:
+        parsed = parse_email_output('"{\\"subject\\":\\"Internship\\",\\"body\\":\\"Dear Team\\"}"')
+        self.assertEqual(parsed["subject"], "Internship")
+        self.assertEqual(parsed["body"], "Dear Team")
+
+    def test_parse_email_output_unwraps_nested_json_body(self) -> None:
+        raw = (
+            '{"subject": "Outer", "body": '
+            '"{\\"subject\\":\\"Inner\\", \\"body\\":\\"Sayın Vispera Ekibi,\\"}"}'
+        )
+        parsed = parse_email_output(raw)
+        self.assertEqual(parsed["subject"], "Outer")
+        self.assertEqual(parsed["body"], "Sayın Vispera Ekibi,")
 
     def test_trailing_comma_is_repaired(self) -> None:
         parsed = parse_llm_json('{"subject": "Hi", "items": [1, 2,],}')
@@ -65,6 +87,26 @@ class TestJsonUtils(unittest.TestCase):
         self.assertNotIn("Email:", body)
         self.assertNotIn("[Your Name]", body)
         self.assertIn("Dear Team", body)
+
+    def test_sanitize_llm_output_removes_control_tokens(self) -> None:
+        cleaned = sanitize_llm_output("<|im_start|><|assistant|>Hello|im_start| im_start <|im_end|>")
+        self.assertNotIn("im_start", cleaned)
+        self.assertNotIn("<|assistant|>", cleaned)
+
+    def test_sanitize_email_body_removes_labels_and_decodes_newlines(self) -> None:
+        body = sanitize_email_body("Subject: X\\nEmail:\\nDear Team,\\nHello")
+        self.assertIn("\n", body)
+        self.assertNotIn("Subject:", body)
+        self.assertNotIn("Email:", body)
+
+    def test_body_looks_invalid_detects_raw_json_body(self) -> None:
+        self.assertTrue(body_looks_invalid('{"subject":"X","body":"Y"}', "English"))
+
+    def test_body_looks_invalid_detects_im_start_spam(self) -> None:
+        self.assertTrue(body_looks_invalid("hello im_start im_start im_start", "English"))
+
+    def test_body_looks_invalid_detects_chinese_junk_for_turkish(self) -> None:
+        self.assertTrue(body_looks_invalid("以下是完整版本\nSayın ekip", "Turkish"))
 
 
 if __name__ == "__main__":

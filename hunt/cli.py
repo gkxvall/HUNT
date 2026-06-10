@@ -15,14 +15,16 @@ from hunt.cv_reader import read_cv
 from hunt.email_sender import send_email
 from hunt.email_writer import (
     GeneratedEmail,
+    build_fallback_email,
     build_email_prompt,
     build_generation_warnings,
     build_prompt_snapshot,
+    merge_candidate_context,
     summarize_candidate,
     summarize_company,
     write_email,
 )
-from hunt.json_utils import LLMJsonParseError
+from hunt.json_utils import LLMJsonParseError, body_looks_invalid, parse_email_output, sanitize_email_body
 from hunt.local_llm import check_ollama_connection
 from hunt.tracker import list_applications, save_application, update_status
 from hunt.utils import HuntError
@@ -148,13 +150,51 @@ def _write_llm_debug_outputs(debug_outputs: dict[str, object]) -> Path:
     debug_dir.mkdir(parents=True, exist_ok=True)
     for name in ("company", "candidate", "email"):
         raw = str(debug_outputs.get(f"{name}_raw", ""))
+        sanitized = str(debug_outputs.get(f"{name}_sanitized", ""))
         parsed = debug_outputs.get(f"{name}_parsed", {})
         (debug_dir / f"{name}_raw.txt").write_text(raw, encoding="utf-8")
         (debug_dir / f"{name}_parsed.json").write_text(
             json.dumps(parsed, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        if name == "email":
+            (debug_dir / "email_sanitized.txt").write_text(sanitized, encoding="utf-8")
+            (debug_dir / "email_final.txt").write_text(
+                str(debug_outputs.get("email_final", "")),
+                encoding="utf-8",
+            )
     return debug_dir
+
+
+def _clean_or_fallback_email(
+    subject: str,
+    body: str,
+    company_summary: dict[str, object],
+    candidate_summary: dict[str, object],
+    config: AppConfig,
+    warnings: list[str],
+) -> tuple[str, str]:
+    cleaned = sanitize_email_body(body, config.email_style.language)
+    if body_looks_invalid(cleaned, config.email_style.language):
+        try:
+            reparsed = parse_email_output(cleaned)
+            subject = subject or reparsed["subject"]
+            cleaned = sanitize_email_body(reparsed["body"], config.email_style.language)
+        except LLMJsonParseError:
+            pass
+
+    if body_looks_invalid(cleaned, config.email_style.language):
+        candidate_context = merge_candidate_context(
+            candidate_summary,
+            config.applicant_profile,
+            config.email_style,
+        )
+        subject, cleaned = build_fallback_email(company_summary, candidate_context, config)
+        warnings.append("LLM output was malformed; using safe fallback email.")
+
+    if body_looks_invalid(cleaned, config.email_style.language):
+        raise LLMJsonParseError("Final email body remained invalid after cleaning and fallback.", body)
+    return subject or "Internship Application", cleaned
 
 
 @app.command()
@@ -229,16 +269,36 @@ def apply(
             )
 
         with console.status("Writing email...", spinner="dots"):
-            subject, body = write_email(
+            try:
+                subject, body = write_email(
+                    company_summary,
+                    candidate_summary,
+                    email,
+                    config.applicant_profile,
+                    config.internship_preferences,
+                    config.email_style,
+                    config.ollama_model,
+                    debug_outputs=debug_outputs if debug_llm_output else None,
+                )
+            except LLMJsonParseError:
+                candidate_context = merge_candidate_context(
+                    candidate_summary,
+                    config.applicant_profile,
+                    config.email_style,
+                )
+                subject, body = build_fallback_email(company_summary, candidate_context, config)
+                generation_warnings.append("LLM output was malformed; using safe fallback email.")
+
+            subject, body = _clean_or_fallback_email(
+                subject,
+                body,
                 company_summary,
                 candidate_summary,
-                email,
-                config.applicant_profile,
-                config.internship_preferences,
-                config.email_style,
-                config.ollama_model,
-                debug_outputs=debug_outputs if debug_llm_output else None,
+                config,
+                generation_warnings,
             )
+            if debug_llm_output:
+                debug_outputs["email_final"] = f"Subject: {subject}\n\n{body}"
             generated = GeneratedEmail(
                 subject=subject,
                 body=body,

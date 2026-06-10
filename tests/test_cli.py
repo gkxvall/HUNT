@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from hunt import cli
 from hunt.config import AppConfig, EmailStyleConfig
+from hunt.json_utils import LLMJsonParseError
 
 
 class TestCliPreview(unittest.TestCase):
@@ -93,6 +94,48 @@ class TestCliPreview(unittest.TestCase):
             email_parsed = json.loads((debug_dir / "email_parsed.json").read_text(encoding="utf-8"))
 
         self.assertEqual(email_parsed["subject"], "Internship")
+
+    def test_clean_or_fallback_email_uses_inner_body_not_raw_json(self) -> None:
+        warnings: list[str] = []
+        subject, body = cli._clean_or_fallback_email(
+            subject="Outer",
+            body='{"subject":"Inner","body":"Sayın Vispera Ekibi, merhaba."}',
+            company_summary={"company_name": "Vispera"},
+            candidate_summary={},
+            config=AppConfig(email_style=EmailStyleConfig(language="Turkish")),
+            warnings=warnings,
+        )
+
+        self.assertEqual(subject, "Outer")
+        self.assertEqual(body, "Sayın Vispera Ekibi, merhaba.")
+        self.assertFalse(warnings)
+
+    def test_invalid_body_uses_fallback_email(self) -> None:
+        warnings: list[str] = []
+        subject, body = cli._clean_or_fallback_email(
+            subject="Bad",
+            body="<|im_start|> 以下是完整版本 <|im_start|> im_start",
+            company_summary={"company_name": "Example", "what_company_does": "AI tools"},
+            candidate_summary={},
+            config=AppConfig(email_style=EmailStyleConfig(language="English")),
+            warnings=warnings,
+        )
+
+        self.assertEqual(subject, "Internship Application")
+        self.assertIn("Dear Example Team", body)
+        self.assertTrue(any("safe fallback" in warning for warning in warnings))
+
+    def test_invalid_fallback_body_blocks_sending(self) -> None:
+        with patch("hunt.cli.build_fallback_email", return_value=("Fallback", "bad")):
+            with self.assertRaises(LLMJsonParseError):
+                cli._clean_or_fallback_email(
+                    subject="Bad",
+                    body="<|im_start|> im_start im_start",
+                    company_summary={},
+                    candidate_summary={},
+                    config=AppConfig(email_style=EmailStyleConfig(language="English")),
+                    warnings=[],
+                )
 
 
 if __name__ == "__main__":

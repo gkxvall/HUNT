@@ -86,6 +86,15 @@ def generate_with_local_llm(
         "options": {
             "temperature": temperature,
             "num_ctx": 8192,
+            "repeat_penalty": 1.1,
+            "stop": [
+                "<|im_start|>",
+                "<|im_end|>",
+                "<|assistant|>",
+                "<|user|>",
+                "<|system|>",
+                "</s>",
+            ],
         },
     }
     if json_mode:
