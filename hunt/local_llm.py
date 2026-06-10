@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import requests
 
-from hunt.config import DEFAULT_OLLAMA_MODEL, clean_env
 from hunt.utils import HuntError
 
 
@@ -19,20 +17,19 @@ class OllamaModelError(HuntError):
     pass
 
 
-def get_ollama_model() -> str:
-    return clean_env(os.getenv("OLLAMA_MODEL")) or DEFAULT_OLLAMA_MODEL
+def _response_error_message(response: requests.Response) -> str:
+    try:
+        detail: Any = response.json()
+        return str(detail.get("error", detail))
+    except ValueError:
+        return response.text
 
 
 def _raise_for_ollama_response(response: requests.Response, model: str) -> None:
     if response.ok:
         return
 
-    try:
-        detail: Any = response.json()
-        message = str(detail.get("error", detail))
-    except ValueError:
-        message = response.text
-
+    message = _response_error_message(response)
     lowered = message.lower()
     if response.status_code == 404 or "not found" in lowered or "pull" in lowered:
         raise OllamaModelError(
@@ -43,8 +40,16 @@ def _raise_for_ollama_response(response: requests.Response, model: str) -> None:
     raise HuntError(f"Ollama returned an error: {message}")
 
 
-def check_ollama_connection() -> tuple[bool, str]:
-    model = get_ollama_model()
+def _json_mode_unsupported(response: requests.Response) -> bool:
+    message = _response_error_message(response).lower()
+    return (
+        response.status_code in {400, 404, 422}
+        and "format" in message
+        and "json" in message
+    )
+
+
+def check_ollama_connection(model: str) -> tuple[bool, str]:
     try:
         response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
     except requests.ConnectionError as exc:
@@ -68,8 +73,12 @@ def check_ollama_connection() -> tuple[bool, str]:
     return True, model
 
 
-def generate_with_local_llm(prompt: str, temperature: float = 0.3) -> str:
-    model = get_ollama_model()
+def generate_with_local_llm(
+    prompt: str,
+    model: str,
+    temperature: float = 0.2,
+    json_mode: bool = False,
+) -> str:
     payload = {
         "model": model,
         "prompt": prompt,
@@ -79,9 +88,19 @@ def generate_with_local_llm(prompt: str, temperature: float = 0.3) -> str:
             "num_ctx": 8192,
         },
     }
+    if json_mode:
+        payload["format"] = "json"
 
     try:
         response = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=180)
+        if json_mode and not response.ok and _json_mode_unsupported(response):
+            fallback_payload = dict(payload)
+            fallback_payload.pop("format", None)
+            response = requests.post(
+                f"{OLLAMA_URL}/api/generate",
+                json=fallback_payload,
+                timeout=180,
+            )
     except requests.ConnectionError as exc:
         raise OllamaConnectionError(
             "Could not connect to the local Ollama server at http://localhost:11434.\n"

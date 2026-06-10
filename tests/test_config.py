@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,7 +59,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(normalize_academic_level("doctoral"), "B")
 
     def test_load_config_defaults_and_word_clamping(self) -> None:
-        with patch.dict("os.environ", {}, clear=True):
+        with patch("hunt.config.load_environment", return_value=None), patch.dict("os.environ", {}, clear=True):
             config = load_config()
 
         self.assertEqual(config.ollama_model, "llama3.1:8b")
@@ -73,11 +74,31 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.email_style.signature_style, "compact")
         self.assertEqual(config.applicant_profile.to_prompt_dict(config.email_style), {})
 
-        with patch.dict("os.environ", {"EMAIL_MAX_WORDS": "20"}, clear=True):
+        with patch("hunt.config.load_environment", return_value=None), patch.dict("os.environ", {"EMAIL_MAX_WORDS": "20"}, clear=True):
             self.assertEqual(load_config().email_style.max_words, 80)
 
-        with patch.dict("os.environ", {"EMAIL_MAX_WORDS": "900"}, clear=True):
+        with patch("hunt.config.load_environment", return_value=None), patch.dict("os.environ", {"EMAIL_MAX_WORDS": "900"}, clear=True):
             self.assertEqual(load_config().email_style.max_words, 700)
+
+    def test_env_loading_from_project_root_and_reload_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".env"
+            env_path.write_text(
+                "APPLICANT_FULL_NAME=First Name\nEMAIL_LANGUAGE=Turkish\n",
+                encoding="utf-8",
+            )
+            with patch("hunt.config.find_dotenv", return_value=str(env_path)):
+                first = load_config()
+                self.assertEqual(first.applicant_profile.identity.full_name, "First Name")
+                self.assertEqual(first.email_style.language, "Turkish")
+
+                env_path.write_text(
+                    "APPLICANT_FULL_NAME=Second Name\nEMAIL_LANGUAGE=French\n",
+                    encoding="utf-8",
+                )
+                second = load_config()
+                self.assertEqual(second.applicant_profile.identity.full_name, "Second Name")
+                self.assertEqual(second.email_style.language, "French")
 
     def test_optional_fields_are_omitted_from_prompt_dicts(self) -> None:
         profile = ApplicantProfile(
@@ -205,6 +226,14 @@ class TestConfig(unittest.TestCase):
         for variable in option_variables:
             line = next(line for line in text.splitlines() if line.startswith(f"{variable}="))
             self.assertIn("# options:", line)
+
+    def test_env_example_does_not_contain_real_personal_data(self) -> None:
+        text = Path(".env.example").read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if not line.startswith("APPLICANT_") or "=" not in line:
+                continue
+            value = line.split("=", 1)[1].split("#", 1)[0].strip()
+            self.assertEqual(value, "")
 
 
 if __name__ == "__main__":

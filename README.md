@@ -1,5 +1,7 @@
 # HUNT
 
+![HUNT logo](huntLogo.png)
+
 HUNT is a privacy-first Python CLI assistant for internship applications. You give it a company website URL, a local CV file path, and a target company email address. It reads the website, reads your CV locally, uses a local Ollama model, drafts a tailored internship application email, previews it in the terminal, and only sends after explicit confirmation.
 
 HUNT does not use the OpenAI API and does not require any cloud LLM API key.
@@ -92,19 +94,65 @@ Show tracked applications:
 python main.py history
 ```
 
+Show the loaded non-secret configuration:
+
+```bash
+python main.py config
+```
+
 Check Ollama:
 
 ```bash
 python main.py check-llm
 ```
 
+Save the final email prompt and filtered config snapshot:
+
+```bash
+python main.py apply --website https://company.com --cv ./cv.pdf --email careers@company.com --debug-prompt
+```
+
+This writes:
+
+- `data/last_prompt.txt`
+- `data/last_config_snapshot.json`
+
+The debug files do not include `EMAIL_APP_PASSWORD` or the full sender email.
+
+Save raw and parsed local model outputs:
+
+```bash
+python main.py apply --website https://company.com --cv ./cv.pdf --email careers@company.com --debug-llm-output
+```
+
+This writes:
+
+- `data/debug/company_raw.txt`
+- `data/debug/company_parsed.json`
+- `data/debug/candidate_raw.txt`
+- `data/debug/candidate_parsed.json`
+- `data/debug/email_raw.txt`
+- `data/debug/email_parsed.json`
+
+HUNT asks Ollama for JSON mode when possible, then repairs or falls back when the model returns markdown, text around JSON, Python-style dictionaries, or normal email text.
+
 ## Environment Variables
 
 HUNT reads `.env` with `python-dotenv`.
 
+HUNT reloads `.env` every time `load_config()` runs, using `override=True`, so edits are reflected in `python main.py config` and the next `apply` run.
+
 All applicant fields are optional. Empty, missing, whitespace-only, and placeholder-like values such as `N/A`, `None`, `your_email@gmail.com`, `your_name`, `your username`, and `example.com` are ignored completely. Ignored values are not passed to the LLM, not shown in the preview, and not included in signatures.
 
 Option variables have safe defaults. Boolean variables accept `true/false`, `yes/no`, `1/0`, and `on/off`.
+
+To confirm `.env` changes are being applied:
+
+```bash
+python main.py config
+```
+
+Check the `.env loaded` path, style values, profile fields passed to the LLM, signature fields, and internship fields. For deeper debugging, run `apply` with `--debug-prompt` and inspect `data/last_prompt.txt`.
 
 ### Local LLM
 

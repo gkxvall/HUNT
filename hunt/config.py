@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-
-load_dotenv()
 
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_EMAIL_LANGUAGE = "English"
@@ -27,7 +26,10 @@ PLACEHOLDER_VALUES = {
     "your_email@gmail.com",
     "your_gmail_app_password",
     "your_name",
+    "your name",
     "your username",
+    "your-url",
+    "your url",
     "example.com",
     "n/a",
     "none",
@@ -55,6 +57,20 @@ EMAIL_TONES = {
     "formal",
     "friendly",
 }
+
+
+def load_environment() -> str | None:
+    env_path = find_dotenv(filename=".env", usecwd=True)
+    if env_path:
+        load_dotenv(env_path, override=True)
+        return env_path
+
+    project_root_env = Path(__file__).resolve().parent.parent / ".env"
+    if project_root_env.exists():
+        load_dotenv(project_root_env, override=True)
+        return str(project_root_env)
+
+    return None
 
 
 def clean_env(value: str | None) -> str | None:
@@ -86,7 +102,7 @@ def parse_csv(value: str | None) -> list[str]:
     seen: set[str] = set()
     items: list[str] = []
     for raw_item in (value or "").split(","):
-        item = raw_item.strip()
+        item = clean_env(raw_item)
         if not item:
             continue
         dedupe_key = item.lower()
@@ -166,6 +182,13 @@ class EmailStyleConfig:
             "include_cv_attachment_note": self.include_cv_attachment_note,
             "include_university_requirement": self.include_university_requirement,
             "include_insurance_note": self.include_insurance_note,
+            "include_links": self.include_links,
+            "include_phone": self.include_phone,
+            "include_location": self.include_location,
+            "include_gpa": self.include_gpa,
+            "include_languages": self.include_languages,
+            "include_availability": self.include_availability,
+            "include_remote_reason": self.include_remote_reason,
         }
 
 
@@ -300,6 +323,8 @@ class ApplicantProfile:
 
     def to_prompt_dict(self, style_config: EmailStyleConfig) -> dict[str, Any]:
         identity = _omit_empty(asdict(self.identity))
+        if not style_config.include_location:
+            identity.pop("current_location", None)
         contact: dict[str, Any] = {}
         if self.contact.personal_email and style_config.signature_style == "detailed":
             contact["personal_email"] = self.contact.personal_email
@@ -376,6 +401,7 @@ class AppConfig:
     ollama_model: str = DEFAULT_OLLAMA_MODEL
     email_address: str | None = None
     email_app_password: str | None = None
+    env_path: str | None = None
     applicant_profile: ApplicantProfile = field(default_factory=ApplicantProfile)
     internship_preferences: ApplicantInternshipPreferences = field(
         default_factory=ApplicantInternshipPreferences
@@ -391,6 +417,7 @@ def build_signature_context(
 
 
 def load_config() -> AppConfig:
+    env_path = load_environment()
     email_style = EmailStyleConfig(
         language=clean_env(os.getenv("EMAIL_LANGUAGE")) or DEFAULT_EMAIL_LANGUAGE,
         academic_level=normalize_academic_level(os.getenv("EMAIL_ACADEMIC_LEVEL")),
@@ -518,10 +545,55 @@ def load_config() -> AppConfig:
         ollama_model=clean_env(os.getenv("OLLAMA_MODEL")) or DEFAULT_OLLAMA_MODEL,
         email_address=clean_env(os.getenv("EMAIL_ADDRESS")),
         email_app_password=clean_env(os.getenv("EMAIL_APP_PASSWORD")),
+        env_path=env_path,
         applicant_profile=profile,
         internship_preferences=internship_preferences,
         email_style=email_style,
     )
+
+
+def config_snapshot(config: AppConfig) -> dict[str, Any]:
+    return {
+        "env_path": config.env_path,
+        "ollama_model": config.ollama_model,
+        "sender_email_masked": mask_email(config.email_address),
+        "email_style": config.email_style.to_prompt_dict(),
+        "applicant_profile_prompt": config.applicant_profile.to_prompt_dict(config.email_style),
+        "signature": config.applicant_profile.to_signature_dict(config.email_style),
+        "internship_preferences": config.internship_preferences.to_prompt_dict(config.email_style),
+    }
+
+
+def mask_email(email: str | None) -> str:
+    if not email or "@" not in email:
+        return ""
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        masked_local = local[0] + "***" if local else "***"
+    else:
+        masked_local = f"{local[0]}***{local[-1]}"
+    return f"{masked_local}@{domain}"
+
+
+def env_example_warnings(path: Path | None = None) -> list[str]:
+    env_example = path or Path(__file__).resolve().parent.parent / ".env.example"
+    if not env_example.exists():
+        return []
+
+    suspicious_prefixes = ("APPLICANT_",)
+    warnings: list[str] = []
+    for line in env_example.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, raw_value = stripped.split("=", 1)
+        value = raw_value.split("#", 1)[0].strip()
+        if key.startswith(suspicious_prefixes) and clean_env(value):
+            warnings.append(
+                ".env.example may contain real applicant info. Keep example applicant fields empty."
+            )
+            break
+    return warnings
 
 
 def _load_project(index: int) -> ApplicantProject:
