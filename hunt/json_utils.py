@@ -148,7 +148,7 @@ def sanitize_llm_output(raw: str) -> str:
     text = (raw or "").replace("\x00", "").replace("\r\n", "\n").replace("\r", "\n").strip()
     text = _normalize_smart_quotes(text)
     text = strip_markdown_fences(text)
-    text = _trim_after_control_spam(text)
+    text = _trim_after_control_noise(text)
     for pattern in CONTROL_TOKEN_PATTERNS:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -327,7 +327,7 @@ def _normalize_smart_quotes(text: str) -> str:
     return text
 
 
-def _trim_after_control_spam(text: str) -> str:
+def _trim_after_control_noise(text: str) -> str:
     match = re.search(r"(?:<?\|?im_start\|?>?.*){3,}", text, flags=re.IGNORECASE)
     if match:
         return text[: match.start()]

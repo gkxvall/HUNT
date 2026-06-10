@@ -1,0 +1,3 @@
+row_index,company_name,website,email,status,subject,error,draft_path,application_id
+0,Vispera,https://vispera.co,gkvallgkvall@gmail.com,skipped,,Existing application found,,
+1,Pulse,https://runpulse.com,gkvallgkvall@gmail.com,sent,Internship Application,,data/drafts/2026-06-10_pulse_gkvallgkvall_at_gmail_com.md,13

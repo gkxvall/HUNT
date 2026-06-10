@@ -94,6 +94,12 @@ Show tracked applications:
 python main.py history
 ```
 
+Run a safe CSV batch in draft-only mode:
+
+```bash
+python main.py batch --csv examples/companies.csv --cv ./cv.pdf
+```
+
 Show the loaded non-secret configuration:
 
 ```bash
@@ -137,6 +143,72 @@ This writes:
 - `data/debug/email_final.txt`
 
 HUNT asks Ollama for JSON mode when possible, then repairs or falls back when the model returns markdown, text around JSON, Python-style dictionaries, or normal email text.
+
+## Batch Mode
+
+Batch mode lets you prepare a CSV of companies and generate tailored internship application drafts one by one. It is designed to be controlled and safe: the default mode does not send email.
+
+Required CSV columns:
+
+- `website`
+- `email`
+
+Optional CSV columns:
+
+- `company_name`
+- `notes`
+- `role`
+- `language`
+- `internship_mode`
+- `status`
+
+Example:
+
+```csv
+company_name,website,email,notes,role,language,internship_mode
+Vispera,https://vispera.co,careers@vispera.co,Interested in computer vision and retail AI,AI Engineering Intern,English,remote
+Pulse,https://runpulse.com,hello@runpulse.com,Interested in document AI and data extraction,ML Intern,English,remote
+```
+
+Draft-only default:
+
+```bash
+python main.py batch --csv examples/companies.csv --cv ./cv.pdf
+```
+
+Validate only, without Ollama calls:
+
+```bash
+python main.py batch --csv examples/companies.csv --cv ./cv.pdf --dry-run
+```
+
+Generate, preview, and ask per company before sending:
+
+```bash
+python main.py batch --csv examples/companies.csv --cv ./cv.pdf --send
+```
+
+Advanced unattended sending:
+
+```bash
+python main.py batch --csv examples/companies.csv --cv ./cv.pdf --send --yes --limit 10
+```
+
+With `--send --yes`, HUNT shows a strong warning and requires typing `I UNDERSTAND`. If no `--limit` is provided, HUNT enforces `BATCH_DEFAULT_LIMIT`, default `20`. It never allows unlimited unattended sending.
+
+Useful flags:
+
+- `--limit 10`: maximum companies to process
+- `--start-at 5`: start from row index 5
+- `--delay 30`: delay between sends
+- `--skip-existing`: skip already tracked applications
+- `--allow-duplicates`: allow duplicate website/email rows
+- `--output data/batch_results.csv`: save progress CSV
+- `--use-cache`: reuse website text in the current batch run
+
+HUNT writes local drafts to `data/drafts/` and updates the results CSV after every row so progress is preserved if the run stops. It sends sequentially, validates email and website fields, checks generated email quality, and refuses to send raw JSON, code fences, chat-template tokens, placeholders, or suspicious junk.
+
+You are responsible for using batch mode ethically and for not sending unwanted or inappropriate messages to companies.
 
 ## Environment Variables
 
@@ -295,6 +367,14 @@ Availability is used only when `EMAIL_INCLUDE_AVAILABILITY=true`. Remote reason 
 - `EMAIL_INCLUDE_LANGUAGES`: boolean
 - `EMAIL_INCLUDE_AVAILABILITY`: boolean
 - `EMAIL_INCLUDE_REMOTE_REASON`: boolean
+
+Batch settings:
+
+- `BATCH_DEFAULT_DELAY_SECONDS`: default delay between sends. Default: `20`
+- `BATCH_DEFAULT_LIMIT`: default max sends for `--send --yes`. Default: `20`
+- `BATCH_ALLOW_DUPLICATES`: boolean. Default: `false`
+- `BATCH_SKIP_EXISTING`: boolean. Default: `true`
+- `BATCH_SAVE_DRAFTS`: boolean. Default: `true`
 
 Academic levels:
 

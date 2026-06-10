@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -10,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from hunt.batch import BatchRow, process_batch, read_batch_csv, validate_batch_rows
 from hunt.config import AppConfig, config_snapshot, env_example_warnings, load_config, mask_email
 from hunt.cv_reader import read_cv
 from hunt.email_sender import send_email
@@ -26,6 +28,7 @@ from hunt.email_writer import (
 )
 from hunt.json_utils import LLMJsonParseError, body_looks_invalid, parse_email_output, sanitize_email_body
 from hunt.local_llm import check_ollama_connection
+from hunt.local_llm import generate_with_local_llm
 from hunt.tracker import list_applications, save_application, update_status
 from hunt.utils import HuntError
 from hunt.website_reader import extract_website_text
@@ -405,6 +408,35 @@ def check_llm() -> None:
     )
 
 
+@app.command("benchmark-llm")
+def benchmark_llm() -> None:
+    """Run a tiny local Ollama generation benchmark."""
+    config = load_config()
+    try:
+        check_ollama_connection(config.ollama_model)
+        started = time.perf_counter()
+        output = generate_with_local_llm(
+            'Return ONLY this JSON object: {"ok": true}',
+            model=config.ollama_model,
+            temperature=0.1,
+            json_mode=True,
+        )
+        elapsed = time.perf_counter() - started
+    except HuntError as exc:
+        _show_error(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        Panel(
+            f"Model: {config.ollama_model}\n"
+            f"Elapsed: {elapsed:.2f}s\n"
+            f"Output preview: {output[:160]}",
+            title="LLM Benchmark",
+            border_style="green",
+        )
+    )
+
+
 @app.command("config")
 def show_config() -> None:
     """Show loaded non-secret configuration and prompt dictionaries."""
@@ -457,3 +489,144 @@ def show_config() -> None:
         for field, value in rows:
             table.add_row(field, value)
         console.print(Panel(table, title=title, border_style="blue"))
+
+
+@app.command("batch")
+def batch(
+    csv_path: Annotated[str, typer.Option("--csv", help="CSV with company website and email rows.")],
+    cv: Annotated[str, typer.Option("--cv", help="Local CV path: PDF, DOCX, or TXT.")],
+    send: Annotated[bool, typer.Option("--send", help="Allow sending with confirmation.")] = False,
+    draft_only: Annotated[bool, typer.Option("--draft-only", help="Only save drafts locally.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Advanced: send without per-company confirmation.")] = False,
+    limit: Annotated[int | None, typer.Option("--limit", help="Maximum rows to process.")] = None,
+    start_at: Annotated[int, typer.Option("--start-at", help="Start from row index.")] = 0,
+    delay: Annotated[int | None, typer.Option("--delay", help="Delay in seconds between sends.")] = None,
+    skip_existing: Annotated[bool, typer.Option("--skip-existing/--no-skip-existing", help="Skip already tracked applications.")] = True,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Validate CSV without calling Ollama.")] = False,
+    output: Annotated[str, typer.Option("--output", help="Results CSV path.")] = "data/batch_results.csv",
+    allow_duplicates: Annotated[bool, typer.Option("--allow-duplicates", help="Allow duplicate email/website rows.")] = False,
+    use_cache: Annotated[bool, typer.Option("--use-cache", help="Reuse website extraction cache within this run.")] = False,
+) -> None:
+    """Generate internship application drafts from a CSV batch."""
+    config = load_config()
+    effective_delay = delay if delay is not None else (config.batch_default_delay_seconds if send else 0)
+    effective_skip_existing = skip_existing and config.batch_skip_existing
+    effective_allow_duplicates = allow_duplicates or config.batch_allow_duplicates
+    effective_limit = limit
+    if send and yes and effective_limit is None:
+        effective_limit = config.batch_default_limit
+
+    try:
+        rows = validate_batch_rows(read_batch_csv(csv_path), allow_duplicates=effective_allow_duplicates)
+    except HuntError as exc:
+        _show_error(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    selected = [row for row in rows if row.row_index >= start_at]
+    if effective_limit is not None:
+        selected = selected[:effective_limit]
+    valid_count = sum(1 for row in selected if row.status == "pending")
+    invalid_count = sum(1 for row in selected if row.status == "invalid")
+    duplicate_count = sum(1 for row in selected if row.status == "duplicate")
+    mode = "draft-only"
+    if send and yes:
+        mode = "send-yes"
+    elif send:
+        mode = "send-confirmed"
+
+    overview = Table.grid(padding=(0, 1))
+    overview.add_column(style="bold")
+    overview.add_column()
+    overview.add_row("Rows selected", str(len(selected)))
+    overview.add_row("Valid rows", str(valid_count))
+    overview.add_row("Invalid rows", str(invalid_count))
+    overview.add_row("Duplicate rows", str(duplicate_count))
+    overview.add_row("Mode", mode)
+    overview.add_row("Delay", str(effective_delay))
+    overview.add_row("Limit", str(effective_limit or "none"))
+    console.print(Panel(overview, title="Batch Mode", border_style="cyan"))
+
+    if dry_run:
+        summary = process_batch(
+            csv_path,
+            cv,
+            config,
+            dry_run=True,
+            limit=effective_limit,
+            start_at=start_at,
+            output=output,
+            allow_duplicates=effective_allow_duplicates,
+        )
+        _render_batch_summary(summary.results)
+        return
+
+    if send and yes:
+        console.print(
+            Panel(
+                "You are about to send emails without per-company confirmation.\n"
+                f"A safety limit of {effective_limit} rows will be enforced.",
+                title="Advanced Sending Warning",
+                border_style="red",
+            )
+        )
+        if typer.prompt("Type I UNDERSTAND to continue") != "I UNDERSTAND":
+            console.print("[yellow]Batch cancelled.[/yellow]")
+            return
+
+    if not dry_run:
+        try:
+            check_ollama_connection(config.ollama_model)
+        except HuntError as exc:
+            _show_error(str(exc))
+            raise typer.Exit(code=1) from exc
+
+    def preview(row: BatchRow, generated: GeneratedEmail, warnings: list[str]) -> None:
+        _render_preview(row.website, row.email, generated.subject, generated.body, config)
+        _render_warnings(warnings)
+
+    def confirm(row: BatchRow, generated: GeneratedEmail) -> str:
+        return typer.prompt("Type SEND to send this email, SKIP to skip, EDIT to save draft only, QUIT to stop batch", default="SKIP")
+
+    try:
+        summary = process_batch(
+            csv_path,
+            cv,
+            config,
+            send=send,
+            draft_only=draft_only,
+            yes=yes,
+            limit=effective_limit,
+            start_at=start_at,
+            delay=effective_delay,
+            skip_existing=effective_skip_existing,
+            dry_run=False,
+            output=output,
+            allow_duplicates=effective_allow_duplicates,
+            use_cache=use_cache,
+            confirm_callback=confirm,
+            preview_callback=preview,
+            progress_callback=lambda message: console.print(f"[cyan]{message}[/cyan]"),
+        )
+    except HuntError as exc:
+        _show_error(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    _render_batch_summary(summary.results)
+    if summary.stopped:
+        console.print("[yellow]Batch stopped safely. Progress was saved.[/yellow]")
+
+
+def _render_batch_summary(results: list[object]) -> None:
+    table = Table(title="Batch Summary")
+    table.add_column("Company")
+    table.add_column("Email")
+    table.add_column("Status")
+    table.add_column("Error")
+    for result in results:
+        table.add_row(
+            getattr(result, "company_name", ""),
+            getattr(result, "email", ""),
+            getattr(result, "status", ""),
+            getattr(result, "error", ""),
+        )
+    console.print(table)

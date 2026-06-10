@@ -17,6 +17,8 @@ DEFAULT_EMAIL_MAX_WORDS = 350
 DEFAULT_EMAIL_FORMAT = "full"
 DEFAULT_GREETING_STYLE = "team"
 DEFAULT_SIGNATURE_STYLE = "compact"
+BATCH_DEFAULT_DELAY_SECONDS = 20
+BATCH_DEFAULT_LIMIT = 20
 MIN_EMAIL_WORDS = 80
 MAX_EMAIL_WORDS = 700
 
@@ -407,6 +409,11 @@ class AppConfig:
         default_factory=ApplicantInternshipPreferences
     )
     email_style: EmailStyleConfig = field(default_factory=EmailStyleConfig)
+    batch_default_delay_seconds: int = BATCH_DEFAULT_DELAY_SECONDS
+    batch_default_limit: int = BATCH_DEFAULT_LIMIT
+    batch_allow_duplicates: bool = False
+    batch_skip_existing: bool = True
+    batch_save_drafts: bool = True
 
 
 def build_signature_context(
@@ -549,6 +556,11 @@ def load_config() -> AppConfig:
         applicant_profile=profile,
         internship_preferences=internship_preferences,
         email_style=email_style,
+        batch_default_delay_seconds=max(0, parse_int(os.getenv("BATCH_DEFAULT_DELAY_SECONDS"), BATCH_DEFAULT_DELAY_SECONDS)),
+        batch_default_limit=max(1, parse_int(os.getenv("BATCH_DEFAULT_LIMIT"), BATCH_DEFAULT_LIMIT)),
+        batch_allow_duplicates=parse_bool(os.getenv("BATCH_ALLOW_DUPLICATES"), False),
+        batch_skip_existing=parse_bool(os.getenv("BATCH_SKIP_EXISTING"), True),
+        batch_save_drafts=parse_bool(os.getenv("BATCH_SAVE_DRAFTS"), True),
     )
 
 
@@ -558,6 +570,13 @@ def config_snapshot(config: AppConfig) -> dict[str, Any]:
         "ollama_model": config.ollama_model,
         "sender_email_masked": mask_email(config.email_address),
         "email_style": config.email_style.to_prompt_dict(),
+        "batch": {
+            "default_delay_seconds": config.batch_default_delay_seconds,
+            "default_limit": config.batch_default_limit,
+            "allow_duplicates": config.batch_allow_duplicates,
+            "skip_existing": config.batch_skip_existing,
+            "save_drafts": config.batch_save_drafts,
+        },
         "applicant_profile_prompt": config.applicant_profile.to_prompt_dict(config.email_style),
         "signature": config.applicant_profile.to_signature_dict(config.email_style),
         "internship_preferences": config.internship_preferences.to_prompt_dict(config.email_style),

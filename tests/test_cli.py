@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from hunt import cli
 from hunt.config import AppConfig, EmailStyleConfig
 from hunt.json_utils import LLMJsonParseError
+from hunt.batch import BatchSummary
 
 
 class TestCliPreview(unittest.TestCase):
@@ -136,6 +137,40 @@ class TestCliPreview(unittest.TestCase):
                     config=AppConfig(email_style=EmailStyleConfig(language="English")),
                     warnings=[],
                 )
+
+    def test_batch_send_wires_confirmation_callback(self) -> None:
+        runner = CliRunner()
+        config = AppConfig()
+        with patch("hunt.cli.load_config", return_value=config):
+            with patch("hunt.cli.read_batch_csv", return_value=[]):
+                with patch("hunt.cli.validate_batch_rows", return_value=[]):
+                    with patch("hunt.cli.check_ollama_connection"):
+                        with patch("hunt.cli.process_batch", return_value=BatchSummary(None, [])) as process:
+                            result = runner.invoke(
+                                cli.app,
+                                ["batch", "--csv", "companies.csv", "--cv", "cv.pdf", "--send"],
+                            )
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIsNotNone(process.call_args.kwargs["confirm_callback"])
+        self.assertTrue(process.call_args.kwargs["send"])
+
+    def test_batch_send_yes_enforces_default_limit(self) -> None:
+        runner = CliRunner()
+        config = AppConfig(batch_default_limit=20)
+        with patch("hunt.cli.load_config", return_value=config):
+            with patch("hunt.cli.read_batch_csv", return_value=[]):
+                with patch("hunt.cli.validate_batch_rows", return_value=[]):
+                    with patch("hunt.cli.check_ollama_connection"):
+                        with patch("hunt.cli.process_batch", return_value=BatchSummary(None, [])) as process:
+                            result = runner.invoke(
+                                cli.app,
+                                ["batch", "--csv", "companies.csv", "--cv", "cv.pdf", "--send", "--yes"],
+                                input="I UNDERSTAND\n",
+                            )
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(process.call_args.kwargs["limit"], 20)
 
 
 if __name__ == "__main__":

@@ -102,7 +102,7 @@ class TestJsonUtils(unittest.TestCase):
     def test_body_looks_invalid_detects_raw_json_body(self) -> None:
         self.assertTrue(body_looks_invalid('{"subject":"X","body":"Y"}', "English"))
 
-    def test_body_looks_invalid_detects_im_start_spam(self) -> None:
+    def test_body_looks_invalid_detects_repeated_im_start_noise(self) -> None:
         self.assertTrue(body_looks_invalid("hello im_start im_start im_start", "English"))
 
     def test_body_looks_invalid_detects_chinese_junk_for_turkish(self) -> None:
