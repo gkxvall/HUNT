@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -25,6 +26,50 @@ def _show_error(message: str) -> None:
     console.print(Panel(message, title="HUNT Error", border_style="red"))
 
 
+def _mask_email(email: str | None) -> str:
+    if not email or "@" not in email:
+        return ""
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        masked_local = local[0] + "***" if local else "***"
+    else:
+        masked_local = f"{local[0]}***{local[-1]}"
+    return f"{masked_local}@{domain}"
+
+
+def _flatten_preview_fields(data: dict[str, object], prefix: str = "") -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for key, value in data.items():
+        label = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            rows.extend(_flatten_preview_fields(value, label))
+        elif isinstance(value, list):
+            rows.append((label, ", ".join(str(item) for item in value)))
+        else:
+            rows.append((label, str(value)))
+    return rows
+
+
+def _render_profile_used(config: AppConfig) -> None:
+    profile_used = config.applicant_profile.to_prompt_dict(config.email_style)
+    signature_used = config.applicant_profile.to_signature_dict(config.email_style)
+    signature_profile_fields = {
+        key: value for key, value in signature_used.items() if key != "style"
+    }
+    rows = _flatten_preview_fields(
+        {"profile": profile_used, "signature": signature_profile_fields}
+    )
+    if not rows:
+        return
+
+    table = Table(box=box.SIMPLE, show_header=False)
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    for field, value in rows:
+        table.add_row(field, value)
+    console.print(Panel(table, title="Profile Used", border_style="blue"))
+
+
 def _render_preview(
     website: str,
     recipient_email: str,
@@ -37,14 +82,22 @@ def _render_preview(
     table.add_column()
     table.add_row("Company website", website)
     table.add_row("To", recipient_email)
+    masked_sender = _mask_email(config.email_address)
+    if masked_sender:
+        table.add_row("Sender email", masked_sender)
     table.add_row("Ollama model", config.ollama_model)
     table.add_row("Email language", config.email_style.language)
     table.add_row("Academic level", config.email_style.academic_level)
     table.add_row("Tone", config.email_style.tone)
+    table.add_row("Length", config.email_style.length)
     table.add_row("Max words", str(config.email_style.max_words))
+    table.add_row("Format", config.email_style.email_format)
     table.add_row("Include links", str(config.email_style.include_links))
     table.add_row("Include phone", str(config.email_style.include_phone))
     table.add_row("Include location", str(config.email_style.include_location))
+    table.add_row("Include GPA", str(config.email_style.include_gpa))
+    table.add_row("Include languages", str(config.email_style.include_languages))
+    table.add_row("Include availability", str(config.email_style.include_availability))
     table.add_row("Subject", subject)
 
     console.print(
@@ -54,6 +107,7 @@ def _render_preview(
             border_style="cyan",
         )
     )
+    _render_profile_used(config)
     console.print(Panel(body, title="Email Body", border_style="green"))
 
 
@@ -89,6 +143,7 @@ def apply(
                 candidate_summary,
                 email,
                 config.applicant_profile,
+                config.internship_preferences,
                 config.email_style,
             )
 
@@ -113,8 +168,8 @@ def apply(
 
         with console.status("Sending email...", spinner="dots"):
             send_email(
-                sender_email=config.email_address,
-                app_password=config.email_app_password,
+                sender_email=config.email_address or "",
+                app_password=config.email_app_password or "",
                 recipient_email=email,
                 subject=generated.subject,
                 body=generated.body,

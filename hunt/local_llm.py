@@ -5,7 +5,7 @@ from typing import Any
 
 import requests
 
-from hunt.config import DEFAULT_OLLAMA_MODEL
+from hunt.config import DEFAULT_OLLAMA_MODEL, clean_env
 from hunt.utils import HuntError
 
 
@@ -20,7 +20,7 @@ class OllamaModelError(HuntError):
 
 
 def get_ollama_model() -> str:
-    return os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip() or DEFAULT_OLLAMA_MODEL
+    return clean_env(os.getenv("OLLAMA_MODEL")) or DEFAULT_OLLAMA_MODEL
 
 
 def _raise_for_ollama_response(response: requests.Response, model: str) -> None:
