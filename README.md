@@ -1,6 +1,6 @@
 # HUNT
 
-![HUNT logo](huntLogo.png)
+![HUNT logo](./assets/huntLogo.png)
 
 Privacy-first local LLM CLI for drafting, previewing, tracking, and optionally sending tailored internship application emails.
 
@@ -25,6 +25,8 @@ HUNT then:
 - tracks the application in SQLite
 
 HUNT does not use the OpenAI API and does not require any cloud LLM API key.
+
+![HUNT Demo](assets/demo.gif)
 
 ## Why HUNT?
 
